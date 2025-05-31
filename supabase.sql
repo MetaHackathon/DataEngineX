@@ -12,22 +12,15 @@ DROP TABLE IF EXISTS paper_chunks CASCADE;
 -- CORE USER MANAGEMENT
 -- ============================================================================
 
--- Create profiles table first (Supabase expects this for default triggers)
+-- Create profiles table (extends Supabase auth.users with additional fields)
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE,
-  updated_at TIMESTAMP DEFAULT NOW(),
-  PRIMARY KEY (id)
-);
-
--- Users table (extends Supabase auth.users)
-CREATE TABLE users (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  email TEXT UNIQUE NOT NULL,
   full_name TEXT,
   avatar_url TEXT,
   subscription_tier TEXT DEFAULT 'free', -- free, pro, enterprise
   created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  updated_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (id)
 );
 
 -- ============================================================================
@@ -37,7 +30,7 @@ CREATE TABLE users (
 -- Complete paper records with full metadata
 CREATE TABLE papers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   paper_id TEXT NOT NULL, -- ArXiv ID, DOI, or custom ID
   title TEXT NOT NULL,
   abstract TEXT,
@@ -60,7 +53,7 @@ CREATE TABLE papers (
 -- Processed text chunks for RAG and search
 CREATE TABLE paper_chunks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
   chunk_id TEXT NOT NULL,
   content TEXT NOT NULL,
@@ -81,7 +74,7 @@ CREATE TABLE paper_chunks (
 -- In-document highlights (text selections)
 CREATE TABLE highlights (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
   highlight_text TEXT NOT NULL,
   page_number INTEGER NOT NULL,
@@ -93,7 +86,7 @@ CREATE TABLE highlights (
 -- Annotations (notes tied to highlights or general paper)
 CREATE TABLE annotations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
   highlight_id UUID REFERENCES highlights(id) ON DELETE CASCADE, -- Optional: tied to highlight
   content TEXT NOT NULL,
@@ -112,7 +105,7 @@ CREATE TABLE annotations (
 -- Concepts (extracted or user-defined)
 CREATE TABLE concepts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   concept_type TEXT DEFAULT 'user_defined', -- user_defined, extracted, auto_generated
@@ -126,7 +119,7 @@ CREATE TABLE concepts (
 -- Connections between entities (papers, concepts, annotations)
 CREATE TABLE connections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   source_type TEXT NOT NULL, -- paper, concept, annotation
   source_id UUID NOT NULL,
   target_type TEXT NOT NULL, -- paper, concept, annotation
@@ -142,7 +135,7 @@ CREATE TABLE connections (
 -- Link concepts to papers/annotations
 CREATE TABLE concept_links (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   concept_id UUID NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
   entity_type TEXT NOT NULL, -- paper, annotation, highlight
   entity_id UUID NOT NULL,
@@ -158,7 +151,7 @@ CREATE TABLE concept_links (
 -- Visual canvas workspaces
 CREATE TABLE canvases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   canvas_data JSONB DEFAULT '{}', -- Complete canvas state (nodes, edges, layout)
@@ -170,7 +163,7 @@ CREATE TABLE canvases (
 -- Individual canvas items (nodes on the canvas)
 CREATE TABLE canvas_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   canvas_id UUID NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
   item_type TEXT NOT NULL, -- paper, concept, annotation, note, group
   entity_id UUID, -- ID of the linked entity (if any)
@@ -189,7 +182,7 @@ CREATE TABLE canvas_items (
 -- Chat sessions with documents
 CREATE TABLE chat_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   paper_id UUID REFERENCES papers(id) ON DELETE CASCADE, -- Optional: chat with specific paper
   session_name TEXT,
   session_type TEXT DEFAULT 'document', -- document, knowledge_base, general
@@ -201,7 +194,7 @@ CREATE TABLE chat_sessions (
 -- Individual chat messages
 CREATE TABLE chat_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
   role TEXT NOT NULL, -- user, assistant, system
   content TEXT NOT NULL,
@@ -218,7 +211,7 @@ CREATE TABLE chat_messages (
 -- Research workflow chains
 CREATE TABLE research_chains (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   chain_type TEXT DEFAULT 'research', -- research, literature_review, analysis
@@ -231,7 +224,7 @@ CREATE TABLE research_chains (
 -- Individual events in research chains
 CREATE TABLE research_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   chain_id UUID NOT NULL REFERENCES research_chains(id) ON DELETE CASCADE,
   event_type TEXT NOT NULL, -- paper_added, annotation_created, connection_made, insight_recorded
   entity_type TEXT, -- paper, annotation, concept, connection
@@ -286,7 +279,6 @@ CREATE INDEX idx_research_events_sequence ON research_events(sequence_order);
 
 -- Enable RLS on all tables
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE papers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE paper_chunks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE highlights ENABLE ROW LEVEL SECURITY;
@@ -303,7 +295,7 @@ ALTER TABLE research_events ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies (users can only access their own data)
 CREATE POLICY "Users can view own profile" ON profiles FOR ALL USING (auth.uid() = id);
-CREATE POLICY "Users can manage own profile" ON users FOR ALL USING (auth.uid() = id);
+-- Profile policy is already covered above
 CREATE POLICY "Users can manage own papers" ON papers FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY "Users can manage own chunks" ON paper_chunks FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY "Users can manage own highlights" ON highlights FOR ALL USING (auth.uid() = user_id);
@@ -386,5 +378,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Demo user for testing (let Supabase handle profile creation via trigger)
-INSERT INTO users (id, email, full_name) VALUES ('00000000-0000-0000-0000-000000000000', 'demo@dataenginex.com', 'Demo User') ON CONFLICT DO NOTHING; 
+-- Demo user for testing (insert into profiles, email is already in auth.users)
+INSERT INTO profiles (id, full_name) VALUES ('00000000-0000-0000-0000-000000000000', 'Demo User') ON CONFLICT DO NOTHING; 
