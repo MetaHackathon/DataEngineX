@@ -17,13 +17,71 @@ class UserContext(BaseModel):
 # PAPER MANAGEMENT
 # ============================================================================
 
+class PaperResponse(BaseModel):
+    """Basic paper information for responses"""
+    id: UUID
+    paper_id: str
+    title: str
+    authors: List[str]
+    abstract: Optional[str] = None
+    year: Optional[int] = None
+    pdf_url: str
+    processing_status: str
+
+class PaperDetail(BaseModel):
+    """Detailed paper information"""
+    id: UUID
+    paper_id: str
+    title: str
+    authors: List[str]
+    abstract: Optional[str] = None
+    year: Optional[int] = None
+    topics: List[str]
+    pdf_url: str
+    full_text: Optional[str] = None
+    citations: int
+    impact_score: float
+    processing_status: str
+    metadata: Dict[str, Any]
+    created_at: str
+    updated_at: str
+
+# ============================================================================
+# PDF UPLOAD & PROCESSING
+# ============================================================================
+
+class PDFUploadRequest(BaseModel):
+    """Request to upload and process a PDF file"""
+    file_name: str
+    file_content: bytes  # Base64 encoded PDF content
+    title: Optional[str] = None
+    authors: Optional[List[str]] = None
+    abstract: Optional[str] = None
+    year: Optional[int] = None
+    topics: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class PDFUploadResponse(BaseModel):
+    """Response after processing uploaded PDF"""
+    success: bool
+    message: str
+    paper_id: UUID
+    paper_detail: PaperDetail
+    related_papers: Optional[List[PaperResponse]] = None
+    processing_time: float
+    processing_status: str
+
+# ============================================================================
+# PAPER MANAGEMENT
+# ============================================================================
+
 class PaperIndexRequest(BaseModel):
     """Request to save a paper to knowledge base"""
     paper_id: str  # ArXiv ID, DOI, or custom
     title: str
     authors: List[str]
     abstract: Optional[str] = None
-    pdf_url: HttpUrl
+    pdf_url: str  # Changed from HttpUrl to str to allow custom schemes
     year: Optional[int] = None
     topics: Optional[List[str]] = None
     # user_id extracted from auth token
@@ -51,24 +109,6 @@ class SavedPaper(BaseModel):
     highlights_count: int
     annotations_count: int
     processing_status: str
-    created_at: str
-    updated_at: str
-
-class PaperDetail(BaseModel):
-    """Detailed paper information"""
-    id: UUID
-    paper_id: str
-    title: str
-    authors: List[str]
-    abstract: Optional[str] = None
-    year: Optional[int] = None
-    topics: List[str]
-    pdf_url: str
-    full_text: Optional[str] = None
-    citations: int
-    impact_score: float
-    processing_status: str
-    metadata: Dict[str, Any]
     created_at: str
     updated_at: str
 

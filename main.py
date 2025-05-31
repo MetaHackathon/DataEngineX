@@ -1,18 +1,21 @@
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables FIRST
 
-from fastapi import FastAPI, Query, Header, Depends, HTTPException
+from fastapi import FastAPI, Query, Header, Depends, HTTPException, UploadFile, File, Form
 from typing import List, Optional
 import os
 from uuid import UUID
 import jwt
+import base64
+import json
 
 from app.models.paper import PaperResponse
 from app.models.rag_models import (
     PaperIndexRequest, PaperIndexResponse,
     SearchRequest, SearchResponse,
     CreateAnnotationRequest, AnnotationResponse,
-    SystemStatsResponse, SavedPaper, UserContext
+    SystemStatsResponse, SavedPaper, UserContext,
+    PDFUploadRequest, PDFUploadResponse
 )
 from app.controllers.paper_controller import PaperController
 from app.controllers.rag_controller import RagController
@@ -139,6 +142,77 @@ async def add_annotation_to_paper(
 async def remove_paper_from_knowledge_base(paper_id: str):
     """Remove a paper from your personal knowledge base"""
     return await rag_controller.delete_paper(paper_id)
+
+# ===== KNOWLEDGE BASE CREATION =====
+
+@app.post("/api/knowledge-base/upload", response_model=PaperResponse)
+async def upload_paper_to_knowledge_base(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    authors: Optional[str] = Form(None),  # Comma-separated list
+    abstract: Optional[str] = Form(None),
+    year: Optional[int] = Form(None),
+    topics: Optional[str] = Form(None),  # Comma-separated list
+    metadata: Optional[str] = Form(None)  # JSON string
+):
+    """
+    Upload a PDF paper to create a new knowledge base entry.
+    The paper will be processed and stored in the user's personal knowledge base.
+    """
+    try:
+        print(f"\n📄 Starting PDF upload process for file: {file.filename}")
+        
+        # Read file content
+        file_content = await file.read()
+        print(f"📦 Read file content: {len(file_content)} bytes")
+        
+        # Parse optional fields
+        authors_list = authors.split(",") if authors else None
+        topics_list = topics.split(",") if topics else None
+        metadata_dict = json.loads(metadata) if metadata else None
+        
+        print(f"📝 Parsed metadata:")
+        print(f"  - Title: {title}")
+        print(f"  - Authors: {authors_list}")
+        print(f"  - Year: {year}")
+        print(f"  - Topics: {topics_list}")
+        
+        # Create upload request
+        upload_request = PDFUploadRequest(
+            file_name=file.filename,
+            file_content=file_content,
+            title=title,
+            authors=authors_list,
+            abstract=abstract,
+            year=year,
+            topics=topics_list,
+            metadata=metadata_dict
+        )
+        print("✅ Created upload request object")
+        
+        # Create demo user for testing
+        demo_user = UserContext(
+            user_id=UUID("00000000-0000-0000-0000-000000000000"),
+            email="demo@dataenginex.com",
+            full_name="Demo User"
+        )
+        print("👤 Using demo user for processing")
+        
+        # Process the upload
+        print("🚀 Sending request to RAG controller for processing...")
+        result = await rag_controller.process_pdf_upload(upload_request, demo_user)
+        print("✨ Upload process completed successfully!")
+        print(f"  - Paper Title: {result.title}")
+        print(f"  - Paper ID: {result.id}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error during upload process: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process PDF upload: {str(e)}"
+        )
 
 # ===== DEMO WORKFLOW ENDPOINT =====
 
