@@ -1,19 +1,21 @@
-from fastapi import FastAPI, Query
-from typing import List
-import os
 from dotenv import load_dotenv
+load_dotenv()  # Load environment variables FIRST
+
+from fastapi import FastAPI, Query, Header, Depends, HTTPException
+from typing import List, Optional
+import os
+from uuid import UUID
+import jwt
 
 from app.models.paper import PaperResponse
 from app.models.rag_models import (
     PaperIndexRequest, PaperIndexResponse,
     SearchRequest, SearchResponse,
-    AnnotationRequest, AnnotationResponse,
-    SystemStatsResponse
+    CreateAnnotationRequest, AnnotationResponse,
+    SystemStatsResponse, SavedPaper, UserContext
 )
 from app.controllers.paper_controller import PaperController
 from app.controllers.rag_controller import RagController
-
-load_dotenv()
 
 app = FastAPI(
     title="DataEngine",
@@ -24,6 +26,38 @@ app = FastAPI(
 # Initialize controllers
 paper_controller = PaperController()
 rag_controller = RagController()
+
+# Authentication dependency
+async def get_current_user(authorization: Optional[str] = Header(None)) -> UserContext:
+    """Extract user context from Supabase JWT token"""
+    if not authorization:
+        # Demo mode - use demo user
+        return UserContext(
+            user_id=UUID("00000000-0000-0000-0000-000000000000"),
+            email="demo@dataenginex.com",
+            full_name="Demo User"
+        )
+    
+    try:
+        # Extract token from "Bearer <token>"
+        token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+        
+        # For now, decode without verification (Supabase handles verification)
+        # In production, you'd verify with Supabase JWT secret
+        payload = jwt.decode(token, options={"verify_signature": False})
+        
+        return UserContext(
+            user_id=UUID(payload.get("sub")),
+            email=payload.get("email"),
+            full_name=payload.get("user_metadata", {}).get("full_name")
+        )
+    except Exception as e:
+        # Fallback to demo mode if token parsing fails
+        return UserContext(
+            user_id=UUID("00000000-0000-0000-0000-000000000000"),
+            email="demo@dataenginex.com", 
+            full_name="Demo User"
+        )
 
 @app.get("/")
 async def root():
@@ -74,35 +108,31 @@ async def get_trending_papers(
 # ===== PERSONAL KNOWLEDGE BASE (Steps 2-4) =====
 
 @app.post("/api/knowledge-base/papers/{paper_id}/save", response_model=PaperIndexResponse)
-async def save_paper_to_knowledge_base(paper_id: str, request: PaperIndexRequest):
+async def save_paper_to_knowledge_base(
+    paper_id: str, 
+    request: PaperIndexRequest, 
+    user: UserContext = Depends(get_current_user)
+):
     """
     Step 2: Save a selected paper to your personal knowledge base.
     This processes the paper with AI to enable intelligent search within its content.
     """
-    return await rag_controller.index_paper(paper_id, request)
+    return await rag_controller.index_paper(paper_id, request, user)
 
-@app.get("/api/knowledge-base/papers")
-async def get_saved_papers():
+@app.get("/api/knowledge-base/papers", response_model=List[SavedPaper])
+async def get_saved_papers(user: UserContext = Depends(get_current_user)):
     """
-    View all papers in your personal knowledge base.
-    Shows what papers you've saved and can search within.
+    Get all papers you've saved to your personal knowledge base.
     """
-    return await rag_controller.get_saved_papers()
-
-@app.post("/api/knowledge-base/papers/{paper_id}/search", response_model=SearchResponse)
-async def search_within_saved_paper(paper_id: str, request: SearchRequest):
-    """
-    Step 3: Search for specific content within a paper you've saved.
-    This uses AI-powered chunking to find relevant sections quickly.
-    """
-    return await rag_controller.search_paper(paper_id, request)
+    return await rag_controller.get_saved_papers(user)
 
 @app.post("/api/knowledge-base/papers/{paper_id}/annotations/{annotation_id}", response_model=AnnotationResponse)
-async def add_annotation_to_paper(paper_id: str, annotation_id: str, request: AnnotationRequest):
-    """
-    Step 4: Add personal notes and annotations to papers in your knowledge base.
-    Your annotations become searchable along with the paper content.
-    """
+async def add_annotation_to_paper(
+    paper_id: str,
+    annotation_id: str,
+    request: CreateAnnotationRequest
+):
+    """Add an annotation to a paper in your knowledge base"""
     return await rag_controller.index_annotation(paper_id, annotation_id, request)
 
 @app.delete("/api/knowledge-base/papers/{paper_id}")
@@ -110,21 +140,14 @@ async def remove_paper_from_knowledge_base(paper_id: str):
     """Remove a paper from your personal knowledge base"""
     return await rag_controller.delete_paper(paper_id)
 
-@app.get("/api/knowledge-base/stats", response_model=SystemStatsResponse)
-async def get_knowledge_base_stats():
-    """
-    Get statistics about your personal knowledge base.
-    Shows how many papers, chunks, and annotations you have.
-    """
-    return await rag_controller.get_system_stats()
-
 # ===== DEMO WORKFLOW ENDPOINT =====
 
 @app.post("/api/demo/complete-workflow")
 async def demo_complete_workflow(
     query: str = Query(..., description="Search query for ArXiv"),
     paper_index: int = Query(0, ge=0, description="Which paper to save (0-based)"),
-    search_query: str = Query(..., description="Search query within the saved paper")
+    search_query: str = Query(..., description="Search query within the saved paper"),
+    user: UserContext = Depends(get_current_user)
 ):
     """
     🎯 Complete demo workflow for presentations:
@@ -154,11 +177,11 @@ async def demo_complete_workflow(
             topics=selected_paper.topics
         )
         
-        save_result = await rag_controller.index_paper(selected_paper.id, index_request)
+        save_result = await rag_controller.index_paper(selected_paper.id, index_request, user)
         
         # Step 3: Search within the saved paper
         search_request = SearchRequest(query=search_query, limit=3)
-        search_results = await rag_controller.search_paper(selected_paper.id, search_request)
+        search_results = await rag_controller.search_paper(selected_paper.id, search_request, user)
         
         return {
             "workflow_success": True,
