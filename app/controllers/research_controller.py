@@ -3,18 +3,35 @@ import uuid
 import time
 import base64
 import json
+import requests
 import httpx
 import PyPDF2
 from io import BytesIO
 from typing import List, Optional
 from datetime import datetime, timezone
 from fastapi import HTTPException
-
 from llama_api_client import LlamaAPIClient
+from openai import OpenAI
+
 
 from app.models.research_models import *
 from app.models.paper import PaperResponse
 from app.utils.config import Config
+
+
+# Load API key from environment variable; this should be set in advance
+LLAMA_API_KEY = os.environ.get('LLAMA_API_KEY')
+
+
+
+# Define the base URL
+BASE_URL = "https://api.llama.com/v1"
+
+
+client = OpenAI(
+    api_key=os.environ.get("LLAMA_API_KEY"), 
+    base_url="https://api.llama.com/compat/v1/"
+)
 
 class ResearchController:
     """Controller for research platform functionality - NotebookLM competitor"""
@@ -22,8 +39,8 @@ class ResearchController:
     def __init__(self):
         # Initialize Llama API client
         self.llama_client = LlamaAPIClient(
-            api_key=os.getenv("LLAMA_API_KEY"),
-            base_url="https://api.llama.com/v1/",
+            api_key=LLAMA_API_KEY,
+            base_url=BASE_URL,
         ) if os.getenv("LLAMA_API_KEY") else None
         
         self.supabase_url = Config.SUPABASE_URL
@@ -41,16 +58,23 @@ class ResearchController:
         start_time = time.time()
         
         try:
+
             print(f"📄 Processing uploaded paper: {request.file_name}")
-            
+            print("CALLING EXTRACT_PDF_TEXT FUNCTION from UPLOAD PAPER CONTROLLER")
             # Extract text from PDF
             full_text = self._extract_pdf_text(request.file_content)
+
+            print("Extracted text from the pdf EXTRACT_PDF_TEXT FUNCTION END from UPLOAD PAPER CONTROLLER!")
+            #print(full_text)
             
             # Use Llama to extract/enhance metadata
+            print("-------------------------------------------")
+            print("Calling EXTRACT_METADATA_WITH_LLAMA FUNCTION from UPLOAD PAPER CONTROLLER")
             metadata = await self._extract_metadata_with_llama(
                 full_text, request.file_name, request.title, request.authors
             )
-            
+            print("EXTRACT_METADATA_WITH_LLAMA FUNCTION END from UPLOAD PAPER CONTROLLER!")
+            print("-------------------------------------------")
             # Create paper record
             paper_uuid = str(uuid.uuid4())
             paper_data = {
@@ -438,9 +462,31 @@ class ResearchController:
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
-    
+
+
+    def chat_completion(self, messages, model="Llama-4-Maverick-17B-128E-Instruct-FP8", max_tokens=256):
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {LLAMA_API_KEY}"
+        }
+
+        payload = {
+            "messages": messages,
+            "model": model,
+            "max_tokens": max_tokens,
+            "stream": False
+        }    
+        response = requests.post(
+            f"{BASE_URL}/chat/completions", 
+            headers=headers, 
+            json=payload
+        )
+
+        return response.json()
+        
     def _extract_pdf_text(self, pdf_content: bytes) -> str:
-        """Extract text from PDF using PyPDF2"""
+        """Extract text from PDF using PyPDF2"""        
+        print("STARTING EXTRACT_PDF_TEXT FUNCTION! INSIDE EXTRACT PDF TEXT FUNCTION")
         try:
             pdf_file = BytesIO(pdf_content)
             pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -448,7 +494,7 @@ class ResearchController:
             text = ""
             for page in pdf_reader.pages:
                 text += page.extract_text() + "\n"
-            
+            print("END OF EXTRACT PDF TEXT FUNCTION!")
             return text.strip()
         except Exception as e:
             print(f"Error extracting PDF text: {e}")
@@ -456,7 +502,40 @@ class ResearchController:
     
     async def _extract_metadata_with_llama(self, full_text: str, filename: str, title: Optional[str], authors: Optional[List[str]]) -> dict:
         """Extract metadata using Llama 4"""
+        
+        completion = client.chat.completions.create(
+            model="Llama-4-Maverick-17B-128E-Instruct-FP8",
+            messages=[
+                {
+                "role": "user",
+                "content": "Which planet do humans live on?"
+                }
+            ],
+        )
+
+        print("LLAMA 4 COMPLETION WITH OPENAI CLIENT: ", completion.choices[0].message.content)
+        
+        print("STARTING EXTRACT_METADATA_WITH_LLAMA FUNCTION! INSIDE EXTRACT METADATA WITH LLAMA FUNCTION")
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that provides concise answers."},
+            {"role": "user", "content": "What is the capital of France?"}
+        ]
+        try:
+            response = self.chat_completion(messages)
+            print("This is the response from the llama 4 function using custom request chat completion function", response)
+        except Exception as e:
+            print(f"Error extracting metadata with llama: {e}")
+            return {    
+                "title": title or filename.replace(".pdf", ""),
+                "authors": authors or [],
+                "abstract": None,
+                "year": None,
+                "topics": []
+            }
+        #print(json.dumps(response, indent=2))
+
         if not self.llama_client:
+            print("Llama client not configured")
             return {
                 "title": title or filename.replace(".pdf", ""),
                 "authors": authors or [],
@@ -466,6 +545,7 @@ class ResearchController:
             }
         
         try:
+            print("Right before prompt")
             prompt = f"""
             Extract metadata from this research paper. Return valid JSON only.
             
@@ -476,14 +556,19 @@ class ResearchController:
             Paper text (first 3000 chars):
             {full_text[:3000]}
             """
-            
+            print("Right before llama 4 function call")
             response = self.llama_client.chat.completions.create(
                 model="Llama-4-Maverick-17B-128E-Instruct-FP8",
                 messages=[{"role": "user", "content": prompt}]
             )
-            
-            content = self._extract_llama_content(response)
+
+            print("Right After Llama 4 function call")
+
+            # content = self._extract_llama_content(response)
+            content = response.choices[0].message.content
             metadata = json.loads(content)
+
+            print("This is the metadata from the llama 4 function", metadata)
             
             return {
                 "title": metadata.get("title", title or filename),

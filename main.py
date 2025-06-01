@@ -194,14 +194,16 @@ async def upload_paper(
     abstract: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
     topics: Optional[str] = Form(None),  # Comma-separated
-    user: UserContext = Depends(get_current_user)
-):
+) -> PaperProcessResponse:
+    
+    print("We have started the upload request brodie! At the start of the function")
     """
     📄 Upload a PDF paper to your research library
     
     Automatically extracts text and metadata using Llama 4
     """
     try:
+        print("started try block!")
         # Read file content
         file_content = await file.read()
         
@@ -217,6 +219,15 @@ async def upload_paper(
             abstract=abstract,
             year=year,
             topics=topics_list
+        )
+
+        print("We have created the upload request body. CALLING UPLOAD PAPER CONTROLLER FROM MAIN.PY")
+        
+        # Use a demo user context (no auth header required)
+        user = UserContext(
+            user_id=UUID("00000000-0000-0000-0000-000000000000"),
+            email="demo@dataenginex.com",
+            full_name="Demo User"
         )
         
         return await research_controller.upload_paper(upload_request, user)
