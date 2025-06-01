@@ -30,7 +30,7 @@ BASE_URL = "https://api.llama.com/v1"
 
 client = OpenAI(
     api_key=os.environ.get("LLAMA_API_KEY"), 
-    base_url="https://api.llama.com/compat/v1/"
+    base_url="https://api.llama.com/v1/chat/completions"
 )
 
 class ResearchController:
@@ -93,8 +93,11 @@ class ResearchController:
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
             
+            print("This is the paper data", paper_data)
             # Store in Supabase
             await self._store_paper(paper_data)
+
+            print("Upload to supabase complete")
             
             # Generate initial analysis
             analysis_preview = await self._generate_quick_analysis(full_text)
@@ -503,73 +506,46 @@ class ResearchController:
     async def _extract_metadata_with_llama(self, full_text: str, filename: str, title: Optional[str], authors: Optional[List[str]]) -> dict:
         """Extract metadata using Llama 4"""
         
-        completion = client.chat.completions.create(
-            model="Llama-4-Maverick-17B-128E-Instruct-FP8",
-            messages=[
-                {
-                "role": "user",
-                "content": "Which planet do humans live on?"
-                }
-            ],
-        )
+        # ------------------------------------------------------------------
+        # Clean implementation: use the OpenAI-compatible client against the
+        # Llama 4 endpoint to extract structured metadata.
+        # ------------------------------------------------------------------
 
-        print("LLAMA 4 COMPLETION WITH OPENAI CLIENT: ", completion.choices[0].message.content)
-        
-        print("STARTING EXTRACT_METADATA_WITH_LLAMA FUNCTION! INSIDE EXTRACT METADATA WITH LLAMA FUNCTION")
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant that provides concise answers."},
-            {"role": "user", "content": "What is the capital of France?"}
-        ]
-        try:
-            response = self.chat_completion(messages)
-            print("This is the response from the llama 4 function using custom request chat completion function", response)
-        except Exception as e:
-            print(f"Error extracting metadata with llama: {e}")
-            return {    
-                "title": title or filename.replace(".pdf", ""),
-                "authors": authors or [],
-                "abstract": None,
-                "year": None,
-                "topics": []
-            }
-        #print(json.dumps(response, indent=2))
+        prompt = f"""
+        Extract metadata from the following scientific paper.
+        Return ONLY valid JSON with keys: title, authors (array), abstract,
+        year (number), topics (array of 5-8 keywords).
 
-        if not self.llama_client:
-            print("Llama client not configured")
-            return {
-                "title": title or filename.replace(".pdf", ""),
-                "authors": authors or [],
-                "abstract": None,
-                "year": None,
-                "topics": []
-            }
-        
+        Known info: Title=\"{title}\", Authors={authors}
+
+        Paper text (first 3000 chars):
+        {full_text[:3000]}
+        """
+
         try:
-            print("Right before prompt")
-            prompt = f"""
-            Extract metadata from this research paper. Return valid JSON only.
-            
-            Current info: Title="{title}", Authors={authors}
-            
-            Extract: title, authors (array), abstract, year (number), topics (array of 5-8 keywords)
-            
-            Paper text (first 3000 chars):
-            {full_text[:3000]}
-            """
-            print("Right before llama 4 function call")
-            response = self.llama_client.chat.completions.create(
+            response = client.chat.completions.create(
                 model="Llama-4-Maverick-17B-128E-Instruct-FP8",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0
             )
 
-            print("Right After Llama 4 function call")
+            content = response.choices[0].message.content.strip()
 
-            # content = self._extract_llama_content(response)
-            content = response.choices[0].message.content
-            metadata = json.loads(content)
+            print("This is the content from the llama 4 function", content)
 
-            print("This is the metadata from the llama 4 function", metadata)
-            
+            # Attempt to parse JSON strictly; if model wrapped the JSON in
+            # ``` or text, try to locate the first \{ and last \} pair.
+            try:
+                metadata = json.loads(content)
+            except json.JSONDecodeError:
+                try:
+                    start = content.index("{")
+                    end = content.rindex("}") + 1
+                    metadata = json.loads(content[start:end])
+                except Exception:
+                    raise ValueError("Model did not return valid JSON")
+
             return {
                 "title": metadata.get("title", title or filename),
                 "authors": metadata.get("authors", authors or []),
@@ -577,7 +553,7 @@ class ResearchController:
                 "year": metadata.get("year"),
                 "topics": metadata.get("topics", [])
             }
-            
+
         except Exception as e:
             print(f"Llama metadata extraction failed: {e}")
             return {
@@ -630,14 +606,45 @@ class ResearchController:
         }
     
     async def _store_paper(self, paper_data: dict):
-        """Store paper in Supabase"""
+        """Insert or update a paper row in Supabase (handles duplicates)."""
+        print("-----------------------------------------")
+        print("entering store paper function")
+        
+        # Helper to recursively remove null bytes from strings
+        def _clean_nulls(value):
+            if isinstance(value, str):
+                return value.replace("\x00", "")
+            if isinstance(value, list):
+                return [_clean_nulls(v) for v in value]
+            if isinstance(value, dict):
+                return {k: _clean_nulls(v) for k, v in value.items()}
+            return value
+
+        # Ensure JSONB fields are proper types
+        paper_data["authors"] = paper_data.get("authors", [])
+        paper_data["topics"] = paper_data.get("topics", [])
+
+        # Strip problematic null bytes that Postgres rejects (code 22P05)
+        paper_data = {k: _clean_nulls(v) for k, v in paper_data.items()}
+
+        headers = self._get_headers()
+        
+        print("Got headers: ", headers)
+        # Ask Supabase to merge duplicates on (user_id,paper_id) unique constraint
+        headers["Prefer"] = "resolution=merge-duplicates,return=minimal"
+
         async with httpx.AsyncClient() as client:
-            response = await client.post(
+            resp = await client.post(
                 f"{self.supabase_url}/rest/v1/papers",
-                headers=self._get_headers(),
-                json=paper_data
+                headers=headers,
+                json=paper_data,
+                timeout=30
             )
-            response.raise_for_status()
+
+            if resp.status_code >= 400:
+                # Log response body for easier debugging then raise
+                print(f"Supabase insert failed: {resp.status_code} {resp.text}")
+                resp.raise_for_status()
     
     def _convert_to_saved_paper(self, paper_data: dict) -> SavedPaper:
         """Convert database paper to SavedPaper model"""
