@@ -60,21 +60,21 @@ class ResearchController:
         try:
 
             print(f"📄 Processing uploaded paper: {request.file_name}")
-            print("CALLING EXTRACT_PDF_TEXT FUNCTION from UPLOAD PAPER CONTROLLER")
+            #print("CALLING EXTRACT_PDF_TEXT FUNCTION from UPLOAD PAPER CONTROLLER")
             # Extract text from PDF
             full_text = self._extract_pdf_text(request.file_content)
 
-            print("Extracted text from the pdf EXTRACT_PDF_TEXT FUNCTION END from UPLOAD PAPER CONTROLLER!")
+            #print("Extracted text from the pdf EXTRACT_PDF_TEXT FUNCTION END from UPLOAD PAPER CONTROLLER!")
             #print(full_text)
             
             # Use Llama to extract/enhance metadata
-            print("-------------------------------------------")
-            print("Calling EXTRACT_METADATA_WITH_LLAMA FUNCTION from UPLOAD PAPER CONTROLLER")
+            #print("-------------------------------------------")
+            #print("Calling EXTRACT_METADATA_WITH_LLAMA FUNCTION from UPLOAD PAPER CONTROLLER")
             metadata = await self._extract_metadata_with_llama(
                 full_text, request.file_name, request.title, request.authors
             )
-            print("EXTRACT_METADATA_WITH_LLAMA FUNCTION END from UPLOAD PAPER CONTROLLER!")
-            print("-------------------------------------------")
+            #print("EXTRACT_METADATA_WITH_LLAMA FUNCTION END from UPLOAD PAPER CONTROLLER!")
+            #print("-------------------------------------------")
             # Save PDF to local uploads directory so it can be served back
             paper_uuid = str(uuid.uuid4())
             file_path   = os.path.join("uploads", f"{paper_uuid}.pdf")
@@ -105,7 +105,7 @@ class ResearchController:
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
             
-            print("This is the paper data", paper_data)
+            #print("This is the paper data", paper_data)
             # Store in Supabase
             await self._store_paper(paper_data)
 
@@ -501,7 +501,7 @@ class ResearchController:
         
     def _extract_pdf_text(self, pdf_content: bytes) -> str:
         """Extract text from PDF using PyPDF2"""        
-        print("STARTING EXTRACT_PDF_TEXT FUNCTION! INSIDE EXTRACT PDF TEXT FUNCTION")
+        #print("STARTING EXTRACT_PDF_TEXT FUNCTION! INSIDE EXTRACT PDF TEXT FUNCTION")
         try:
             pdf_file = BytesIO(pdf_content)
             pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -509,7 +509,7 @@ class ResearchController:
             text = ""
             for page in pdf_reader.pages:
                 text += page.extract_text() + "\n"
-            print("END OF EXTRACT PDF TEXT FUNCTION!")
+            #print("END OF EXTRACT PDF TEXT FUNCTION!")
             return text.strip()
         except Exception as e:
             print(f"Error extracting PDF text: {e}")
@@ -619,8 +619,8 @@ class ResearchController:
     
     async def _store_paper(self, paper_data: dict):
         """Insert or update a paper row in Supabase (handles duplicates)."""
-        print("-----------------------------------------")
-        print("entering store paper function")
+        #print("-----------------------------------------")
+        #print("entering store paper function")
         
         # Helper to recursively remove null bytes from strings
         def _clean_nulls(value):
@@ -641,7 +641,7 @@ class ResearchController:
 
         headers = self._get_headers()
         
-        print("Got headers: ", headers)
+        #print("Got headers: ", headers)
         # Ask Supabase to merge duplicates on (user_id,paper_id) unique constraint
         headers["Prefer"] = "resolution=merge-duplicates,return=minimal"
 
@@ -887,7 +887,7 @@ class ResearchController:
                 temperature=0.5
             )
             
-            print("This is the response from the llama client", response)
+            #print("This is the response from the llama client", response)
             content = self._extract_llama_content(response)
             
             # Try to parse as JSON, fallback to simple structure

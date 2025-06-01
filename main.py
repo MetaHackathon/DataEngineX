@@ -217,14 +217,14 @@ async def upload_paper(
     source: str = Form("upload")  # Add source parameter with default value
 ) -> PaperProcessResponse:
     
-    print("We have started the upload request brodie! At the start of the function")
+    #print("We have started the upload request brodie! At the start of the function")
     """
     📄 Upload a PDF paper to your research library
     
     Automatically extracts text and metadata using Llama 4
     """
     try:
-        print("started try block!")
+        #print("started try block!")
         # Read file content
         file_content = await file.read()
         
@@ -242,7 +242,7 @@ async def upload_paper(
             topics=topics_list
         )
 
-        print("We have created the upload request body. CALLING UPLOAD PAPER CONTROLLER FROM MAIN.PY")
+        #print("We have created the upload request body. CALLING UPLOAD PAPER CONTROLLER FROM MAIN.PY")
         
         # Use a demo user context (no auth header required)
         user = UserContext(
