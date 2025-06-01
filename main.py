@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 load_dotenv('.env.local')  # Load environment variables FIRST
 
 from fastapi import FastAPI, Query, HTTPException, Depends, Header, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import os
 from supabase import create_client, Client
@@ -16,6 +17,15 @@ app = FastAPI(
     title="DataEngineX",
     description="🧠 AI-Powered Research Platform - NotebookLM Competitor",
     version="3.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 # Initialize controllers
