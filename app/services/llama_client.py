@@ -3,19 +3,24 @@ Llama API Client for AI-powered features in DataEngineX
 """
 
 import os
-import aiohttp
 import json
 from typing import Dict, Any, Optional, List
+from openai import OpenAI
 
 class LlamaClient:
     """Client for interacting with Llama 4 API"""
     
     def __init__(self):
-        self.api_url = os.getenv("LLAMA_API_URL", "https://api.llama.ai/v1")
         self.api_key = os.getenv("LLAMA_API_KEY")
         
         if not self.api_key:
             print("Warning: LLAMA_API_KEY not found in environment variables. Using mock responses.")
+            self.client = None
+        else:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://api.llama.com/v1"
+            )
     
     async def generate_response(
         self, 
@@ -26,39 +31,36 @@ class LlamaClient:
     ) -> str:
         """Generate a response from Llama 4"""
         
-        if not self.api_key:
+        if not self.client:
             return self._mock_response(prompt)
         
         try:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
             
-            payload = {
-                "model": "llama-4",
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature
-            }
+            response = self.client.chat.completions.create(
+                model="Llama-4-Maverick-17B-128E-Instruct-FP8",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.api_url}/chat/completions",
-                    headers=headers,
-                    json=payload
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data["choices"][0]["message"]["content"]
-                    else:
-                        print(f"Llama API error: {response.status}")
-                        return self._mock_response(prompt)
+            # Handle Llama API response format
+            if hasattr(response, 'completion_message') and response.completion_message:
+                content = response.completion_message.get('content', {})
+                if isinstance(content, dict) and 'text' in content:
+                    return content['text'].strip()
+                elif isinstance(content, str):
+                    return content.strip()
+            
+            # Fallback for OpenAI-style response
+            if response and response.choices and len(response.choices) > 0:
+                return response.choices[0].message.content.strip()
+            
+            print(f"Unexpected response structure: {response}")
+            return self._mock_response(prompt)
                         
         except Exception as e:
             print(f"Error calling Llama API: {e}")
