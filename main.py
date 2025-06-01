@@ -11,12 +11,13 @@ from uuid import UUID
 import httpx
 from fastapi.responses import StreamingResponse
 import io
+from datetime import datetime
 
 from app.models.paper import PaperResponse
 from app.models.research_models import *
 from app.controllers.paper_controller import PaperController
 from app.controllers.research_controller import ResearchController
-from app.controllers.knowledgebase_controller import router as knowledgebase_router
+from app.controllers.knowledgebase_controller import router as knowledgebase_router, get_user_knowledgebases
 from app.controllers.document_controller import router as document_router
 from app.controllers.knowledge_canvas_controller import router as knowledge_canvas_router
 from app.controllers.intelligent_search_controller import router as intelligent_search_router
@@ -213,6 +214,7 @@ async def upload_paper(
     abstract: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
     topics: Optional[str] = Form(None),  # Comma-separated
+    source: str = Form("upload")  # Add source parameter with default value
 ) -> PaperProcessResponse:
     
     print("We have started the upload request brodie! At the start of the function")
@@ -532,14 +534,78 @@ async def get_library_stats(user: UserContext = Depends(get_current_user)):
 
 @app.get("/api/dashboard")
 async def get_dashboard(user: UserContext = Depends(get_current_user)):
-    """🎛️ Get dashboard data with recent activity and insights"""
+    """🎛️ Get dashboard data with quick stats and AI insights"""
+    # Fetch real stats from DB
+    # Papers
+    papers = await research_controller.get_library(user)
+    total_papers = len(papers)
+    # Annotations
+    async with httpx.AsyncClient() as client:
+        annotations_resp = await client.get(
+            f"{research_controller.supabase_url}/rest/v1/annotations",
+            headers=research_controller._get_headers(),
+            params={"user_id": f"eq.{str(user.user_id)}"}
+        )
+        total_annotations = len(annotations_resp.json())
+        highlights_resp = await client.get(
+            f"{research_controller.supabase_url}/rest/v1/highlights",
+            headers=research_controller._get_headers(),
+            params={"user_id": f"eq.{str(user.user_id)}"}
+        )
+        total_highlights = len(highlights_resp.json())
+        chat_sessions_resp = await client.get(
+            f"{research_controller.supabase_url}/rest/v1/chat_sessions",
+            headers=research_controller._get_headers(),
+            params={"user_id": f"eq.{str(user.user_id)}"}
+        )
+        total_chat_sessions = len(chat_sessions_resp.json())
+    # Knowledge Bases
+    try:
+        knowledge_bases = await get_user_knowledgebases(user.user_id)
+        total_knowledgebases = len(knowledge_bases)
+    except Exception:
+        total_knowledgebases = 0
+    quick_stats = {
+        "total_papers": total_papers,
+        "total_annotations": total_annotations,
+        "total_highlights": total_highlights,
+        "total_concepts": 0,  # Not implemented
+        "total_collections": 0,  # Not implemented
+        "total_knowledgebases": total_knowledgebases,
+        "total_chat_sessions": total_chat_sessions,
+        "recent_activity": [],
+        "storage_used_mb": 0.0,
+        "research_metrics": {},
+        "last_updated": datetime.now().isoformat()
+    }
+    # Only run AI insights on the last two most recent papers
+    ai_insights = []
+    if papers:
+        # Sort papers by created_at or fallback to id (if no created_at)
+        sorted_papers = sorted(
+            papers,
+            key=lambda p: getattr(p, 'created_at', None) or getattr(p, 'id', None),
+            reverse=True
+        )
+        for paper in sorted_papers[:2]:
+            try:
+                analysis = await research_controller.analyze_paper(
+                    AnalysisRequest(paper_id=paper.id, analysis_type="summary"), user
+                )
+                ai_insights.append({
+                    "paper_id": str(paper.id),
+                    "title": paper.title,
+                    "insights": analysis.insights
+                })
+            except Exception:
+                ai_insights.append({
+                    "paper_id": str(paper.id),
+                    "title": paper.title,
+                    "insights": []
+                })
     return {
-        "recent_papers": [],
-        "recent_annotations": [],
-        "suggested_papers": [],
-        "active_research_areas": [],
-        "reading_progress": {},
-        "ai_insights": []
+        "quick_stats": quick_stats,
+        "ai_insights": ai_insights
     }
 
 if __name__ == "__main__":

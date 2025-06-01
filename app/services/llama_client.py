@@ -27,7 +27,8 @@ class LlamaClient:
         prompt: str, 
         max_tokens: int = 1000,
         temperature: float = 0.7,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, Any]] = None
     ) -> str:
         """Generate a response from Llama 4"""
         
@@ -40,12 +41,19 @@ class LlamaClient:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
             
-            response = self.client.chat.completions.create(
-                model="Llama-4-Maverick-17B-128E-Instruct-FP8",
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
+            # Build completion kwargs
+            completion_kwargs = {
+                "model": "Llama-4-Maverick-17B-128E-Instruct-FP8",
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            
+            # Add response_format if provided (for structured JSON output)
+            if response_format:
+                completion_kwargs["response_format"] = response_format
+            
+            response = self.client.chat.completions.create(**completion_kwargs)
             
             # Handle Llama API response format
             if hasattr(response, 'completion_message') and response.completion_message:
@@ -55,9 +63,22 @@ class LlamaClient:
                 elif isinstance(content, str):
                     return content.strip()
             
+            # Handle raw JSON response
+            if hasattr(response, 'json') and callable(response.json):
+                try:
+                    json_response = response.json()
+                    if isinstance(json_response, dict) and 'content' in json_response:
+                        return json_response['content'].strip()
+                    return json.dumps(json_response)
+                except:
+                    pass
+            
             # Fallback for OpenAI-style response
             if response and response.choices and len(response.choices) > 0:
-                return response.choices[0].message.content.strip()
+                content = response.choices[0].message.content
+                if isinstance(content, (dict, list)):
+                    return json.dumps(content)
+                return content.strip()
             
             print(f"Unexpected response structure: {response}")
             return self._mock_response(prompt)

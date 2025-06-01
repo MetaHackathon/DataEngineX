@@ -869,8 +869,7 @@ class ResearchController:
             
             Analysis type: {analysis_type}
             
-            Paper text (first 5000 chars):
-            {full_text[:5000]}
+            {full_text}
             
             Provide:
             1. Main findings and contributions
@@ -888,6 +887,7 @@ class ResearchController:
                 temperature=0.5
             )
             
+            print("This is the response from the llama client", response)
             content = self._extract_llama_content(response)
             
             # Try to parse as JSON, fallback to simple structure
