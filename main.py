@@ -8,6 +8,9 @@ from typing import List, Optional
 import os
 from supabase import create_client, Client
 from uuid import UUID
+import httpx
+from fastapi.responses import StreamingResponse
+import io
 
 from app.models.paper import PaperResponse
 from app.models.research_models import *
@@ -250,6 +253,36 @@ async def upload_paper(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.get("/api/download-pdf")
+async def download_pdf_proxy(url: str):
+    """
+    📥 Download PDF from external URL (bypasses CORS)
+    
+    This endpoint acts as a proxy to download PDFs from external sources
+    like ArXiv, avoiding CORS issues in the frontend.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, follow_redirects=True)
+            response.raise_for_status()
+            
+            # Check if it's actually a PDF
+            content_type = response.headers.get('content-type', '')
+            if 'pdf' not in content_type.lower():
+                raise HTTPException(status_code=400, detail="URL does not return a PDF")
+            
+            # Return the PDF as a streaming response
+            return StreamingResponse(
+                io.BytesIO(response.content),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=paper.pdf"}
+            )
+            
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 @app.get("/api/library", response_model=List[SavedPaper])
 async def get_research_library(user: UserContext = Depends(get_current_user)):

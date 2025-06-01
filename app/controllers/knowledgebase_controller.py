@@ -38,18 +38,21 @@ async def get_user_knowledgebases(
     try:
         supabase = get_supabase()
         
-        # Use the database function for consistency
-        result = supabase.rpc('get_user_knowledge_bases', {'p_user_id': str(user_id)}).execute()
+        # Direct query instead of database function
+        result = supabase.table('knowledge_bases').select('*').eq('user_id', str(user_id)).order('updated_at', desc=True).execute()
         
         if result.data:
-            # Transform the JSON result to match our response model
             knowledge_bases = []
             for kb_data in result.data:
+                # Get paper count separately
+                paper_count_result = supabase.table('knowledge_base_papers').select('id', count='exact').eq('knowledge_base_id', kb_data['id']).execute()
+                paper_count = paper_count_result.count or 0
+                
                 kb = KnowledgebaseResponse(
                     id=kb_data['id'],
                     name=kb_data['name'],
                     description=kb_data.get('description'),
-                    paper_count=kb_data['paper_count'],
+                    paper_count=paper_count,
                     created_at=kb_data['created_at'],
                     updated_at=kb_data['updated_at'],
                     tags=kb_data.get('tags', []),
