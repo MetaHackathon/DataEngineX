@@ -1,4 +1,4 @@
 from .paper_controller import PaperController
-from .rag_controller import RagController
+from .research_controller import ResearchController
 
-__all__ = ["PaperController", "RagController"] 
+__all__ = ["PaperController", "ResearchController"] 

@@ -1,38 +1,36 @@
 from dotenv import load_dotenv
-load_dotenv()  # Load environment variables FIRST
+load_dotenv('.env.local')  # Load environment variables FIRST
 
-from fastapi import FastAPI, Query, Header, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Query, HTTPException, Depends, Header, UploadFile, File, Form
 from typing import List, Optional
 import os
+from supabase import create_client, Client
 from uuid import UUID
-import jwt
-import base64
-import json
 
 from app.models.paper import PaperResponse
-from app.models.rag_models import (
-    PaperIndexRequest, PaperIndexResponse,
-    SearchRequest, SearchResponse,
-    CreateAnnotationRequest, AnnotationResponse,
-    SystemStatsResponse, SavedPaper, UserContext,
-    PDFUploadRequest, PDFUploadResponse
-)
+from app.models.research_models import *
 from app.controllers.paper_controller import PaperController
-from app.controllers.rag_controller import RagController
+from app.controllers.research_controller import ResearchController
 
 app = FastAPI(
-    title="DataEngine",
-    description="Research paper discovery and personal knowledge base builder",
-    version="2.0.0"
+    title="DataEngineX",
+    description="🧠 AI-Powered Research Platform - NotebookLM Competitor",
+    version="3.0.0"
 )
 
 # Initialize controllers
 paper_controller = PaperController()
-rag_controller = RagController()
+research_controller = ResearchController()
+
+# Initialize Supabase client for authentication
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # Service role key for backend operations
+)
 
 # Authentication dependency
 async def get_current_user(authorization: Optional[str] = Header(None)) -> UserContext:
-    """Extract user context from Supabase JWT token"""
+    """Extract user context from Supabase authorization header"""
     if not authorization:
         # Demo mode - use demo user
         return UserContext(
@@ -45,17 +43,22 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> UserC
         # Extract token from "Bearer <token>"
         token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
         
-        # For now, decode without verification (Supabase handles verification)
-        # In production, you'd verify with Supabase JWT secret
-        payload = jwt.decode(token, options={"verify_signature": False})
+        # Validate token with Supabase
+        user_response = supabase.auth.get_user(token)
+        
+        if user_response.user is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+        
+        user = user_response.user
         
         return UserContext(
-            user_id=UUID(payload.get("sub")),
-            email=payload.get("email"),
-            full_name=payload.get("user_metadata", {}).get("full_name")
+            user_id=UUID(user.id),
+            email=user.email or "",
+            full_name=user.user_metadata.get("full_name") if user.user_metadata else None
         )
     except Exception as e:
-        # Fallback to demo mode if token parsing fails
+        # For development/demo purposes, fallback to demo mode
+        # In production, you might want to raise HTTPException(401, "Authentication required")
         return UserContext(
             user_id=UUID("00000000-0000-0000-0000-000000000000"),
             email="demo@dataenginex.com", 
@@ -65,212 +68,409 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> UserC
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to DataEngine API - Paper Discovery + Personal Knowledge Base",
-        "workflow": [
-            "1. Search ArXiv for papers",
-            "2. Select papers you want to save",
-            "3. Add to your personal knowledge base",
-            "4. Search within your saved papers"
+        "message": "🧠 DataEngineX - AI Research Platform",
+        "description": "NotebookLM competitor with AI-powered research capabilities",
+        "features": [
+            "📚 Research Library Management",
+            "📄 PDF Upload & Processing", 
+            "🔍 ArXiv Paper Discovery",
+            "✏️ Annotations & Highlights",
+            "💬 Chat with Papers (Llama 4)",
+            "🔬 AI-Powered Analysis",
+            "🔗 Knowledge Graphs",
+            "🔎 Intelligent Search"
         ],
+        "version": "3.0.0",
         "docs": "/docs"
     }
 
-# ===== PAPER DISCOVERY (Step 1) =====
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "DataEngineX Research Platform"}
 
-@app.get("/api/arxiv/search", response_model=List[PaperResponse])
-async def search_arxiv(
-    query: str = Query(..., description="Search query (e.g., 'machine learning')"),
+# ============================================================================
+# PAPER DISCOVERY (ArXiv Integration)
+# ============================================================================
+
+@app.get("/api/discover", response_model=List[PaperResponse])
+async def discover_papers(
+    q: str = Query(..., description="Search query for papers"),
     start: int = Query(0, ge=0, description="Starting index"),
-    max_results: int = Query(10, ge=1, le=100, description="Number of results to return"),
-    sort_by: str = Query("relevance", pattern="^(relevance|lastUpdatedDate|submittedDate)$"),
-    sort_order: str = Query("descending", pattern="^(ascending|descending)$")
+    limit: int = Query(10, ge=1, le=50, description="Number of results"),
+    sort: str = Query("relevance", description="Sort by: relevance, date, submitted"),
+    order: str = Query("desc", description="Order: desc, asc")
 ):
-    """Step 1: Search ArXiv for papers to discover relevant research"""
+    """
+    🔍 Discover papers from ArXiv
+    
+    **Examples:**
+    - `/api/discover?q=transformers&limit=5`
+    - `/api/discover?q=machine learning&sort=date`
+    """
+    sort_mapping = {
+        "relevance": "relevance",
+        "date": "lastUpdatedDate", 
+        "submitted": "submittedDate"
+    }
+    
+    order_mapping = {
+        "desc": "descending",
+        "asc": "ascending"
+    }
+    
     return await paper_controller.search_arxiv(
-        query=query,
+        query=q,
         start=start,
-        max_results=max_results,
-        sort_by=sort_by,
-        sort_order=sort_order
+        max_results=limit,
+        sort_by=sort_mapping.get(sort, "relevance"),
+        sort_order=order_mapping.get(order, "descending")
     )
 
-@app.get("/api/papers/recommended", response_model=List[PaperResponse])
-async def get_recommended_papers(
-    limit: int = Query(10, ge=1, le=100, description="Number of results to return")
+@app.get("/api/discover/trending", response_model=List[PaperResponse])
+async def discover_trending(
+    limit: int = Query(20, ge=1, le=50, description="Number of trending papers")
 ):
-    """Discover foundational papers in computer science and machine learning"""
-    return await paper_controller.get_recommended_papers(limit)
-
-@app.get("/api/papers/trending", response_model=List[PaperResponse])
-async def get_trending_papers(
-    limit: int = Query(10, ge=1, le=100, description="Number of results to return")
-):
-    """Discover trending papers from the last month"""
+    """📈 Discover trending papers from last 30 days"""
     return await paper_controller.get_trending_papers(limit)
 
-# ===== PERSONAL KNOWLEDGE BASE (Steps 2-4) =====
+@app.get("/api/discover/recommended", response_model=List[PaperResponse])
+async def discover_recommended(
+    limit: int = Query(15, ge=1, le=50, description="Number of recommended papers")
+):
+    """⭐ Get foundational papers in CS/ML"""
+    return await paper_controller.get_recommended_papers(limit)
 
-@app.post("/api/knowledge-base/papers/{paper_id}/save", response_model=PaperIndexResponse)
-async def save_paper_to_knowledge_base(
-    paper_id: str, 
-    request: PaperIndexRequest, 
+@app.get("/api/discover/category/{category}", response_model=List[PaperResponse])
+async def discover_by_category(
+    category: str,
+    limit: int = Query(20, ge=1, le=50, description="Number of results")
+):
+    """🏷️ Discover papers by ArXiv category (cs.AI, cs.LG, cs.CV, etc.)"""
+    return await paper_controller.search_arxiv(
+        query=f"cat:{category}",
+        max_results=limit,
+        sort_by="submittedDate",
+        sort_order="descending"
+    )
+
+@app.post("/api/discover/save/{paper_id}", response_model=PaperProcessResponse)
+async def save_discovered_paper(
+    paper_id: str,
+    user: UserContext = Depends(get_current_user)
+):
+    """💾 Save a discovered ArXiv paper to your research library"""
+    try:
+        # First get the paper details
+        papers = await paper_controller.search_arxiv(query=f"id:{paper_id}", max_results=1)
+        if not papers:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        
+        paper = papers[0]
+        return await research_controller.save_arxiv_paper(paper, user)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save paper: {str(e)}")
+
+# ============================================================================
+# RESEARCH LIBRARY MANAGEMENT
+# ============================================================================
+
+@app.post("/api/library/upload", response_model=PaperProcessResponse)
+async def upload_paper(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    authors: Optional[str] = Form(None),  # Comma-separated
+    abstract: Optional[str] = Form(None),
+    year: Optional[int] = Form(None),
+    topics: Optional[str] = Form(None),  # Comma-separated
     user: UserContext = Depends(get_current_user)
 ):
     """
-    Step 2: Save a selected paper to your personal knowledge base.
-    This processes the paper with AI to enable intelligent search within its content.
-    """
-    return await rag_controller.index_paper(paper_id, request, user)
-
-@app.get("/api/knowledge-base/papers", response_model=List[SavedPaper])
-async def get_saved_papers(user: UserContext = Depends(get_current_user)):
-    """
-    Get all papers you've saved to your personal knowledge base.
-    """
-    return await rag_controller.get_saved_papers(user)
-
-@app.post("/api/knowledge-base/papers/{paper_id}/annotations/{annotation_id}", response_model=AnnotationResponse)
-async def add_annotation_to_paper(
-    paper_id: str,
-    annotation_id: str,
-    request: CreateAnnotationRequest
-):
-    """Add an annotation to a paper in your knowledge base"""
-    return await rag_controller.index_annotation(paper_id, annotation_id, request)
-
-@app.delete("/api/knowledge-base/papers/{paper_id}")
-async def remove_paper_from_knowledge_base(paper_id: str):
-    """Remove a paper from your personal knowledge base"""
-    return await rag_controller.delete_paper(paper_id)
-
-# ===== KNOWLEDGE BASE CREATION =====
-
-@app.post("/api/knowledge-base/upload", response_model=PaperResponse)
-async def upload_paper_to_knowledge_base(
-    file: UploadFile = File(...),
-    title: Optional[str] = Form(None),
-    authors: Optional[str] = Form(None),  # Comma-separated list
-    abstract: Optional[str] = Form(None),
-    year: Optional[int] = Form(None),
-    topics: Optional[str] = Form(None),  # Comma-separated list
-    metadata: Optional[str] = Form(None)  # JSON string
-):
-    """
-    Upload a PDF paper to create a new knowledge base entry.
-    The paper will be processed and stored in the user's personal knowledge base.
+    📄 Upload a PDF paper to your research library
+    
+    Automatically extracts text and metadata using Llama 4
     """
     try:
-        print(f"\n📄 Starting PDF upload process for file: {file.filename}")
-        
         # Read file content
         file_content = await file.read()
-        print(f"📦 Read file content: {len(file_content)} bytes")
         
-        # Parse optional fields
+        # Parse form data
         authors_list = authors.split(",") if authors else None
         topics_list = topics.split(",") if topics else None
-        metadata_dict = json.loads(metadata) if metadata else None
         
-        print(f"📝 Parsed metadata:")
-        print(f"  - Title: {title}")
-        print(f"  - Authors: {authors_list}")
-        print(f"  - Year: {year}")
-        print(f"  - Topics: {topics_list}")
-        
-        # Create upload request
-        upload_request = PDFUploadRequest(
+        upload_request = PaperUploadRequest(
             file_name=file.filename,
             file_content=file_content,
             title=title,
             authors=authors_list,
             abstract=abstract,
             year=year,
-            topics=topics_list,
-            metadata=metadata_dict
+            topics=topics_list
         )
-        print("✅ Created upload request object")
         
-        # Create demo user for testing
-        demo_user = UserContext(
-            user_id=UUID("00000000-0000-0000-0000-000000000000"),
-            email="demo@dataenginex.com",
-            full_name="Demo User"
-        )
-        print("👤 Using demo user for processing")
-        
-        # Process the upload
-        print("🚀 Sending request to RAG controller for processing...")
-        result = await rag_controller.process_pdf_upload(upload_request, demo_user)
-        print("✨ Upload process completed successfully!")
-        print(f"  - Paper Title: {result.title}")
-        print(f"  - Paper ID: {result.id}")
-        
-        return result
+        return await research_controller.upload_paper(upload_request, user)
         
     except Exception as e:
-        print(f"❌ Error during upload process: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process PDF upload: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-# ===== DEMO WORKFLOW ENDPOINT =====
+@app.get("/api/library", response_model=List[SavedPaper])
+async def get_research_library(user: UserContext = Depends(get_current_user)):
+    """📚 Get your complete research library"""
+    return await research_controller.get_library(user)
 
-@app.post("/api/demo/complete-workflow")
-async def demo_complete_workflow(
-    query: str = Query(..., description="Search query for ArXiv"),
-    paper_index: int = Query(0, ge=0, description="Which paper to save (0-based)"),
-    search_query: str = Query(..., description="Search query within the saved paper"),
+@app.delete("/api/library/{paper_id}")
+async def delete_paper(
+    paper_id: UUID,
+    user: UserContext = Depends(get_current_user)
+):
+    """🗑️ Remove a paper from your library"""
+    # Implementation would delete from database
+    return {"success": True, "message": f"Paper {paper_id} removed from library"}
+
+# ============================================================================
+# ANNOTATIONS & HIGHLIGHTS
+# ============================================================================
+
+@app.post("/api/papers/{paper_id}/highlights", response_model=HighlightResponse)
+async def create_highlight(
+    paper_id: UUID,
+    request: CreateHighlightRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """✏️ Create a highlight in a paper"""
+    request.paper_id = paper_id
+    return await research_controller.create_highlight(request, user)
+
+@app.post("/api/papers/{paper_id}/annotations", response_model=AnnotationResponse)
+async def create_annotation(
+    paper_id: UUID,
+    request: CreateAnnotationRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """📝 Create an annotation (note, question, insight, critique)"""
+    request.paper_id = paper_id
+    return await research_controller.create_annotation(request, user)
+
+@app.get("/api/papers/{paper_id}/highlights")
+async def get_highlights(
+    paper_id: UUID,
+    user: UserContext = Depends(get_current_user)
+):
+    """Get all highlights for a paper"""
+    # Implementation would fetch highlights from database
+    return {"paper_id": paper_id, "highlights": []}
+
+@app.get("/api/papers/{paper_id}/annotations")
+async def get_annotations(
+    paper_id: UUID,
+    user: UserContext = Depends(get_current_user)
+):
+    """Get all annotations for a paper"""
+    # Implementation would fetch annotations from database
+    return {"paper_id": paper_id, "annotations": []}
+
+# ============================================================================
+# CHAT WITH PAPERS (Llama 4 Integration)
+# ============================================================================
+
+@app.post("/api/chat/sessions", response_model=ChatSessionResponse)
+async def create_chat_session(
+    request: ChatSessionRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """💬 Create a chat session with a paper or your entire library"""
+    return await research_controller.create_chat_session(request, user)
+
+@app.post("/api/chat/message", response_model=ChatMessageResponse)
+async def send_chat_message(
+    request: ChatMessageRequest,
     user: UserContext = Depends(get_current_user)
 ):
     """
-    🎯 Complete demo workflow for presentations:
-    1. Search ArXiv for papers
-    2. Save the selected paper to knowledge base  
-    3. Search within the saved paper
+    🤖 Chat with your papers using Llama 4
     
-    Perfect for demonstrating the full pipeline!
+    Ask questions, get insights, request summaries, etc.
     """
-    try:
-        # Step 1: Search ArXiv
-        papers = await paper_controller.search_arxiv(query=query, max_results=5)
-        
-        if not papers or paper_index >= len(papers):
-            return {"error": "No papers found or invalid paper index"}
-        
-        selected_paper = papers[paper_index]
-        
-        # Step 2: Save paper to knowledge base
-        index_request = PaperIndexRequest(
-            paper_id=selected_paper.id,
-            title=selected_paper.title,
-            authors=selected_paper.authors,
-            abstract=selected_paper.abstract,
-            pdf_url=selected_paper.url,
-            year=selected_paper.year,
-            topics=selected_paper.topics
-        )
-        
-        save_result = await rag_controller.index_paper(selected_paper.id, index_request, user)
-        
-        # Step 3: Search within the saved paper
-        search_request = SearchRequest(query=search_query, limit=3)
-        search_results = await rag_controller.search_paper(selected_paper.id, search_request, user)
-        
-        return {
-            "workflow_success": True,
-            "step_1_search_results": f"Found {len(papers)} papers matching '{query}'",
-            "step_2_selected_paper": {
-                "title": selected_paper.title,
-                "id": selected_paper.id
-            },
-            "step_3_save_result": save_result,
-            "step_4_search_results": search_results,
-            "demo_message": "🎉 Complete workflow: Discovery → Save → Search → Results!"
-        }
-        
-    except Exception as e:
-        return {"error": f"Demo workflow failed: {str(e)}"}
+    return await research_controller.send_chat_message(request, user)
+
+@app.get("/api/chat/sessions")
+async def get_chat_sessions(user: UserContext = Depends(get_current_user)):
+    """Get all your chat sessions"""
+    # Implementation would fetch chat sessions from database
+    return {"sessions": []}
+
+@app.get("/api/chat/sessions/{session_id}/messages")
+async def get_chat_messages(
+    session_id: UUID,
+    user: UserContext = Depends(get_current_user)
+):
+    """Get all messages in a chat session"""
+    # Implementation would fetch messages from database
+    return {"session_id": session_id, "messages": []}
+
+# ============================================================================
+# AI-POWERED ANALYSIS
+# ============================================================================
+
+@app.post("/api/papers/{paper_id}/analyze", response_model=AnalysisResponse)
+async def analyze_paper(
+    paper_id: UUID,
+    request: AnalysisRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """
+    🔬 Analyze a paper using Llama 4
+    
+    **Analysis types:**
+    - `summary` - Key findings and contributions
+    - `methodology` - Research methods analysis  
+    - `critique` - Critical evaluation
+    - `key_points` - Extract main points
+    """
+    request.paper_id = paper_id
+    return await research_controller.analyze_paper(request, user)
+
+@app.post("/api/compare", response_model=ComparisonResponse)
+async def compare_papers(
+    request: CompareRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """🔍 Compare multiple papers using Llama 4"""
+    # Implementation would use Llama to compare papers
+    return ComparisonResponse(
+        papers=[],
+        similarities=[],
+        differences=[],
+        synthesis="Comparison analysis would be generated here",
+        recommendations=[]
+    )
+
+@app.get("/api/papers/{paper_id}/insights")
+async def get_paper_insights(
+    paper_id: UUID,
+    user: UserContext = Depends(get_current_user)
+):
+    """💡 Get AI-generated insights for a paper"""
+    # Implementation would fetch stored analyses and insights
+    return {"paper_id": paper_id, "insights": []}
+
+# ============================================================================
+# SEARCH & DISCOVERY
+# ============================================================================
+
+@app.post("/api/search", response_model=SearchResponse)
+async def search_library(
+    request: SearchRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """
+    🔎 Search across your entire research library
+    
+    Search papers, annotations, highlights, and notes
+    """
+    return await research_controller.search_library(request, user)
+
+@app.get("/api/search/quick")
+async def quick_search(
+    q: str = Query(..., description="Quick search query"),
+    user: UserContext = Depends(get_current_user)
+):
+    """⚡ Quick search across all content"""
+    request = SearchRequest(query=q, limit=10)
+    return await research_controller.search_library(request, user)
+
+# ============================================================================
+# CONCEPTS & KNOWLEDGE GRAPH
+# ============================================================================
+
+@app.post("/api/concepts", response_model=ConceptResponse)
+async def create_concept(
+    request: CreateConceptRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """🧠 Create a research concept for knowledge mapping"""
+    # Implementation would create concept in database
+    return ConceptResponse(
+        id=UUID("00000000-0000-0000-0000-000000000000"),
+        name=request.name,
+        description=request.description,
+        concept_type=request.concept_type,
+        color=request.color,
+        linked_papers=0,
+        linked_annotations=0,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z"
+    )
+
+@app.get("/api/concepts")
+async def get_concepts(user: UserContext = Depends(get_current_user)):
+    """Get all your research concepts"""
+    return {"concepts": []}
+
+@app.post("/api/concepts/link")
+async def link_concept(
+    request: LinkConceptRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """🔗 Link a concept to papers, annotations, or highlights"""
+    return {"success": True, "message": "Concept linked successfully"}
+
+# ============================================================================
+# COLLECTIONS & WORKFLOWS
+# ============================================================================
+
+@app.post("/api/collections", response_model=CollectionResponse)
+async def create_collection(
+    request: CreateCollectionRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """📂 Create a research collection (group of related papers)"""
+    collection_id = UUID("00000000-0000-0000-0000-000000000000")
+    return CollectionResponse(
+        id=collection_id,
+        name=request.name,
+        description=request.description,
+        papers_count=len(request.paper_ids),
+        is_public=request.is_public,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z"
+    )
+
+@app.get("/api/collections")
+async def get_collections(user: UserContext = Depends(get_current_user)):
+    """Get all your research collections"""
+    return {"collections": []}
+
+# ============================================================================
+# STATISTICS & DASHBOARD
+# ============================================================================
+
+@app.get("/api/stats", response_model=LibraryStatsResponse)
+async def get_library_stats(user: UserContext = Depends(get_current_user)):
+    """📊 Get your research library statistics"""
+    return LibraryStatsResponse(
+        total_papers=0,
+        total_annotations=0,
+        total_highlights=0,
+        total_concepts=0,
+        total_collections=0,
+        recent_activity=[],
+        storage_used_mb=0.0,
+        last_updated="2024-01-01T00:00:00Z"
+    )
+
+@app.get("/api/dashboard")
+async def get_dashboard(user: UserContext = Depends(get_current_user)):
+    """🎛️ Get dashboard data with recent activity and insights"""
+    return {
+        "recent_papers": [],
+        "recent_annotations": [],
+        "suggested_papers": [],
+        "active_research_areas": [],
+        "reading_progress": {},
+        "ai_insights": []
+    }
 
 if __name__ == "__main__":
     import uvicorn

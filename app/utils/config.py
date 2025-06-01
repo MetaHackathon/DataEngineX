@@ -2,8 +2,8 @@ import os
 from typing import Dict, Any
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env.local file
+load_dotenv('.env.local')
 
 class Config:
     """Application configuration settings"""
@@ -23,17 +23,17 @@ class Config:
     DEFAULT_SORT_BY = "relevance"
     DEFAULT_SORT_ORDER = "descending"
     
-    # RAG Settings (Optional)
-    CHUNKR_API_KEY = os.getenv("CHUNKR_API_KEY")
-    CHUNKR_BASE_URL = "https://api.chunkr.ai/api/v1"
-    
-    # Storage Settings (Optional)
+    # Storage Settings
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     
-    # RAG Configuration
-    DEFAULT_SEARCH_LIMIT = 5
-    MAX_SEARCH_LIMIT = 20
+    # Llama API for AI processing
+    LLAMA_API_KEY = os.getenv("LLAMA_API_KEY")
+    
+    # Research Platform Configuration
+    DEFAULT_SEARCH_LIMIT = 20
+    MAX_SEARCH_LIMIT = 50
+    MAX_UPLOAD_SIZE_MB = 50
     
     @classmethod
     def get_env_var(cls, key: str, default: Any = None) -> Any:
