@@ -1,15 +1,13 @@
 from .paper import PaperResponse, ArxivQuery
-from .rag_models import (
-    PaperIndexRequest, PaperIndexResponse,
-    SearchRequest, SearchResult, SearchResponse,
-    AnnotationRequest, AnnotationResponse,
-    SystemStatsResponse
-)
+from .research_models import *
 
 __all__ = [
     "PaperResponse", "ArxivQuery",
-    "PaperIndexRequest", "PaperIndexResponse",
-    "SearchRequest", "SearchResult", "SearchResponse",
-    "AnnotationRequest", "AnnotationResponse",
-    "SystemStatsResponse"
+    "UserContext", "PaperUploadRequest", "SavedPaper",
+    "CreateHighlightRequest", "HighlightResponse",
+    "CreateAnnotationRequest", "AnnotationResponse", 
+    "ChatSessionRequest", "ChatMessageRequest", "ChatMessageResponse",
+    "AnalysisRequest", "AnalysisResponse",
+    "SearchRequest", "SearchResponse",
+    "PaperProcessResponse", "LibraryStatsResponse"
 ] 
