@@ -13,12 +13,22 @@ from app.models.paper import PaperResponse
 from app.models.research_models import *
 from app.controllers.paper_controller import PaperController
 from app.controllers.research_controller import ResearchController
+from app.controllers.knowledgebase_controller import router as knowledgebase_router
+from app.controllers.document_controller import router as document_router
+from app.controllers.knowledge_canvas_controller import router as knowledge_canvas_router
+from app.controllers.intelligent_search_controller import router as intelligent_search_router
 
 app = FastAPI(
     title="DataEngineX",
     description="🧠 AI-Powered Research Platform - NotebookLM Competitor",
     version="3.0.0"
 )
+
+# Include routers for new features
+app.include_router(knowledgebase_router)
+app.include_router(document_router)
+app.include_router(knowledge_canvas_router)
+app.include_router(intelligent_search_router)
 
 # Expose local PDF uploads
 UPLOAD_DIR = "uploads"

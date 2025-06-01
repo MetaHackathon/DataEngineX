@@ -20,7 +20,7 @@ class ArxivService:
         self,
         query: str,
         start: int = 0,
-        max_results: int = 10,
+        max_results: int = 500,
         sort_by: str = "relevance",
         sort_order: str = "descending"
     ) -> List[PaperResponse]:

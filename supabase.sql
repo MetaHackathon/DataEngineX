@@ -379,4 +379,307 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Demo user for testing (insert into profiles, email is already in auth.users)
-INSERT INTO profiles (id, full_name) VALUES ('00000000-0000-0000-0000-000000000000', 'Demo User') ON CONFLICT DO NOTHING; 
+INSERT INTO profiles (id, full_name) VALUES ('00000000-0000-0000-0000-000000000000', 'Demo User') ON CONFLICT DO NOTHING;
+
+-- ============================================================================
+-- KNOWLEDGE BASE MANAGEMENT (NEW - Required by Frontend)
+-- ============================================================================
+
+-- Knowledge bases for grouping papers
+CREATE TABLE knowledge_bases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  tags JSONB DEFAULT '[]',
+  is_public BOOLEAN DEFAULT FALSE,
+  status TEXT DEFAULT 'active', -- active, archived, deleted
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Junction table for papers in knowledge bases
+CREATE TABLE knowledge_base_papers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+  paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+  added_at TIMESTAMP DEFAULT NOW(),
+  added_by UUID REFERENCES profiles(id),
+  UNIQUE(knowledge_base_id, paper_id)
+);
+
+-- Knowledge base sharing/collaboration
+CREATE TABLE knowledge_base_shares (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+  shared_with_user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  shared_by_user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  permissions TEXT DEFAULT 'read', -- read, write, admin
+  public_link_id TEXT UNIQUE, -- For public sharing
+  created_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP
+);
+
+-- AI-generated insights for knowledge bases
+CREATE TABLE knowledge_base_insights (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+  insights JSONB NOT NULL DEFAULT '[]',
+  trends JSONB DEFAULT '[]',
+  research_gaps JSONB DEFAULT '[]',
+  key_connections JSONB DEFAULT '[]',
+  generated_by TEXT DEFAULT 'llama-4', -- AI model used
+  generated_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '30 days'
+);
+
+-- ============================================================================
+-- ENHANCED DOCUMENT & ANNOTATION SUPPORT
+-- ============================================================================
+
+-- Enhanced highlights table with frontend requirements
+-- (Adding missing columns to existing highlights table)
+ALTER TABLE highlights ADD COLUMN IF NOT EXISTS comment TEXT;
+ALTER TABLE highlights ADD COLUMN IF NOT EXISTS highlight_type TEXT DEFAULT 'text';
+ALTER TABLE highlights ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+-- Document chat messages (separate from paper chat)
+CREATE TABLE document_chat_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+  role TEXT NOT NULL, -- user, assistant
+  content TEXT NOT NULL,
+  context JSONB DEFAULT '{}', -- highlights, page context, etc.
+  sources JSONB DEFAULT '[]', -- Referenced highlights/annotations
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Document view analytics
+CREATE TABLE document_views (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+  session_id TEXT,
+  pages_viewed JSONB DEFAULT '[]',
+  time_spent INTEGER DEFAULT 0, -- seconds
+  last_page INTEGER,
+  zoom_level FLOAT DEFAULT 1.0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================================
+-- ENHANCED SEARCH & DISCOVERY TABLES
+-- ============================================================================
+
+-- User search history for improved recommendations
+CREATE TABLE search_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  search_type TEXT DEFAULT 'papers', -- papers, library, annotations
+  filters JSONB DEFAULT '{}',
+  results_count INTEGER DEFAULT 0,
+  clicked_results JSONB DEFAULT '[]',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Paper quality scores and metrics
+CREATE TABLE paper_metrics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  paper_id UUID NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+  quality_score INTEGER, -- 0-100
+  relevance_score INTEGER, -- 0-100 based on user activity
+  venue TEXT,
+  h_index INTEGER,
+  downloads INTEGER DEFAULT 0,
+  saves INTEGER DEFAULT 0,
+  calculated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(paper_id)
+);
+
+-- User activity tracking for personalization
+CREATE TABLE user_activity (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  activity_type TEXT NOT NULL, -- paper_view, paper_save, annotation_create, etc.
+  entity_type TEXT, -- paper, annotation, highlight, knowledge_base
+  entity_id UUID,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================================
+-- ENHANCED INDEXES FOR PERFORMANCE
+-- ============================================================================
+
+-- Knowledge base indexes
+CREATE INDEX idx_knowledge_bases_user ON knowledge_bases(user_id);
+CREATE INDEX idx_knowledge_bases_status ON knowledge_bases(status);
+CREATE INDEX idx_knowledge_base_papers_kb ON knowledge_base_papers(knowledge_base_id);
+CREATE INDEX idx_knowledge_base_papers_paper ON knowledge_base_papers(paper_id);
+CREATE INDEX idx_knowledge_base_shares_kb ON knowledge_base_shares(knowledge_base_id);
+CREATE INDEX idx_knowledge_base_shares_user ON knowledge_base_shares(shared_with_user_id);
+
+-- Document and search indexes
+CREATE INDEX idx_document_chat_messages_paper ON document_chat_messages(paper_id);
+CREATE INDEX idx_document_views_user_paper ON document_views(user_id, paper_id);
+CREATE INDEX idx_search_history_user ON search_history(user_id);
+CREATE INDEX idx_paper_metrics_quality ON paper_metrics(quality_score);
+CREATE INDEX idx_user_activity_user_type ON user_activity(user_id, activity_type);
+
+-- Full-text search indexes
+CREATE INDEX idx_knowledge_bases_name ON knowledge_bases USING gin(to_tsvector('english', name));
+CREATE INDEX idx_knowledge_bases_description ON knowledge_bases USING gin(to_tsvector('english', description));
+
+-- ============================================================================
+-- ENHANCED ROW LEVEL SECURITY
+-- ============================================================================
+
+-- Enable RLS on new tables
+ALTER TABLE knowledge_bases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_base_papers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_base_shares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_base_insights ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_views ENABLE ROW LEVEL SECURITY;
+ALTER TABLE search_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE paper_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_activity ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for knowledge bases
+CREATE POLICY "Users can manage own knowledge bases" ON knowledge_bases FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can view shared knowledge bases" ON knowledge_bases FOR SELECT USING (
+  auth.uid() = user_id OR 
+  is_public = true OR 
+  EXISTS (
+    SELECT 1 FROM knowledge_base_shares 
+    WHERE knowledge_base_id = knowledge_bases.id 
+    AND shared_with_user_id = auth.uid()
+  )
+);
+
+CREATE POLICY "Users can manage own kb papers" ON knowledge_base_papers FOR ALL USING (
+  EXISTS (SELECT 1 FROM knowledge_bases WHERE id = knowledge_base_id AND user_id = auth.uid())
+);
+
+CREATE POLICY "Users can manage own kb shares" ON knowledge_base_shares FOR ALL USING (
+  auth.uid() = shared_by_user_id OR auth.uid() = shared_with_user_id
+);
+
+CREATE POLICY "Users can view kb insights" ON knowledge_base_insights FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM knowledge_bases kb 
+    WHERE kb.id = knowledge_base_id 
+    AND (kb.user_id = auth.uid() OR kb.is_public = true)
+  )
+);
+
+-- RLS Policies for document features
+CREATE POLICY "Users can manage own document chat" ON document_chat_messages FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage own document views" ON document_views FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage own search history" ON search_history FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can view paper metrics" ON paper_metrics FOR SELECT USING (true);
+CREATE POLICY "Users can manage own activity" ON user_activity FOR ALL USING (auth.uid() = user_id);
+
+-- ============================================================================
+-- UTILITY FUNCTIONS FOR FRONTEND SUPPORT
+-- ============================================================================
+
+-- Get knowledge base with paper count
+CREATE OR REPLACE FUNCTION get_knowledge_base_stats(p_kb_id UUID)
+RETURNS JSON AS $$
+DECLARE
+  result JSON;
+BEGIN
+  SELECT json_build_object(
+    'id', kb.id,
+    'name', kb.name,
+    'description', kb.description,
+    'paper_count', (SELECT COUNT(*) FROM knowledge_base_papers WHERE knowledge_base_id = kb.id),
+    'tags', kb.tags,
+    'is_public', kb.is_public,
+    'status', kb.status,
+    'created_at', kb.created_at,
+    'updated_at', kb.updated_at
+  ) INTO result
+  FROM knowledge_bases kb
+  WHERE kb.id = p_kb_id;
+  
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Enhanced user stats with knowledge bases
+CREATE OR REPLACE FUNCTION get_enhanced_user_stats(p_user_id UUID)
+RETURNS JSON AS $$
+DECLARE
+  result JSON;
+BEGIN
+  SELECT json_build_object(
+    'total_papers', (SELECT COUNT(*) FROM papers WHERE user_id = p_user_id),
+    'completed_papers', (SELECT COUNT(*) FROM papers WHERE user_id = p_user_id AND processing_status = 'completed'),
+    'total_chunks', (SELECT COUNT(*) FROM paper_chunks WHERE user_id = p_user_id),
+    'total_highlights', (SELECT COUNT(*) FROM highlights WHERE user_id = p_user_id),
+    'total_annotations', (SELECT COUNT(*) FROM annotations WHERE user_id = p_user_id),
+    'total_concepts', (SELECT COUNT(*) FROM concepts WHERE user_id = p_user_id),
+    'total_connections', (SELECT COUNT(*) FROM connections WHERE user_id = p_user_id),
+    'total_canvases', (SELECT COUNT(*) FROM canvases WHERE user_id = p_user_id),
+    'total_chat_sessions', (SELECT COUNT(*) FROM chat_sessions WHERE user_id = p_user_id),
+    'total_knowledgebases', (SELECT COUNT(*) FROM knowledge_bases WHERE user_id = p_user_id),
+    'recent_activity', (
+      SELECT json_agg(
+        json_build_object(
+          'type', activity_type,
+          'entity_type', entity_type,
+          'entity_id', entity_id,
+          'created_at', created_at
+        )
+      )
+      FROM user_activity 
+      WHERE user_id = p_user_id 
+      ORDER BY created_at DESC 
+      LIMIT 10
+    )
+  ) INTO result;
+  
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Get papers with enhanced metadata for frontend
+CREATE OR REPLACE FUNCTION get_enhanced_papers(p_user_id UUID, p_limit INTEGER DEFAULT 10)
+RETURNS JSON AS $$
+DECLARE
+  result JSON;
+BEGIN
+  SELECT json_agg(
+    json_build_object(
+      'id', p.id,
+      'title', p.title,
+      'abstract', p.abstract,
+      'authors', p.authors,
+      'year', p.year,
+      'citations', p.citations,
+      'institution', p.institution,
+      'url', p.pdf_url,
+      'topics', p.topics,
+      'qualityScore', COALESCE(pm.quality_score, 75),
+      'relevanceScore', COALESCE(pm.relevance_score, 80),
+      'venue', pm.venue,
+      'processing_status', p.processing_status,
+      'created_at', p.created_at
+    )
+  ) INTO result
+  FROM papers p
+  LEFT JOIN paper_metrics pm ON pm.paper_id = p.id
+  WHERE p.user_id = p_user_id
+  ORDER BY p.created_at DESC
+  LIMIT p_limit;
+  
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER; 
