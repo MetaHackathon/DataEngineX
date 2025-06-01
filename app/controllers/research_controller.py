@@ -75,8 +75,19 @@ class ResearchController:
             )
             print("EXTRACT_METADATA_WITH_LLAMA FUNCTION END from UPLOAD PAPER CONTROLLER!")
             print("-------------------------------------------")
-            # Create paper record
+            # Save PDF to local uploads directory so it can be served back
             paper_uuid = str(uuid.uuid4())
+            file_path   = os.path.join("uploads", f"{paper_uuid}.pdf")
+            try:
+                with open(file_path, "wb") as f:
+                    f.write(request.file_content)
+            except Exception as e:
+                print(f"Failed to persist uploaded PDF: {e}")
+                file_path = None
+
+            file_url = f"/files/{paper_uuid}.pdf" if file_path else None
+
+            # Create paper record
             paper_data = {
                 "id": paper_uuid,
                 "paper_id": f"upload_{paper_uuid[:8]}",
@@ -85,7 +96,8 @@ class ResearchController:
                 "abstract": metadata["abstract"],
                 "year": metadata["year"],
                 "topics": metadata["topics"],
-                "pdf_url": f"uploaded://{paper_uuid}",
+                "pdf_url": file_url or f"uploaded://{paper_uuid}",
+                "pdf_file_path": file_path,
                 "full_text": full_text,
                 "processing_status": "completed",
                 "user_id": str(user.user_id),
@@ -112,7 +124,7 @@ class ResearchController:
                 abstract=paper_data["abstract"],
                 year=paper_data["year"],
                 topics=paper_data["topics"],
-                pdf_url=paper_data["pdf_url"],
+                pdf_url=file_url,
                 full_text=full_text,
                 processing_status="completed",
                 created_at=paper_data["created_at"],

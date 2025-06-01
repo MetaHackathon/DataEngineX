@@ -3,6 +3,7 @@ load_dotenv('.env.local')  # Load environment variables FIRST
 
 from fastapi import FastAPI, Query, HTTPException, Depends, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from typing import List, Optional
 import os
 from supabase import create_client, Client
@@ -18,6 +19,11 @@ app = FastAPI(
     description="🧠 AI-Powered Research Platform - NotebookLM Competitor",
     version="3.0.0"
 )
+
+# Expose local PDF uploads
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/files", StaticFiles(directory=UPLOAD_DIR), name="files")
 
 # Add CORS middleware
 app.add_middleware(
