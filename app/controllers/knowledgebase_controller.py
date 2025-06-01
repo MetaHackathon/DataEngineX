@@ -562,8 +562,9 @@ async def generate_knowledgebase_connections(
         if not kb_result.data or kb_result.data[0]['user_id'] != str(user_id):
             raise HTTPException(status_code=403, detail="Access denied")
         
+        # Fetch full_text for each paper
         papers_result = supabase.table('knowledge_base_papers').select(
-            'papers(id, title, abstract, authors, year, citations, topics)'
+            'papers(id, title, abstract, authors, year, citations, topics, full_text)'
         ).eq('knowledge_base_id', str(kb_id)).execute()
         
         papers = []
@@ -916,15 +917,14 @@ async def generate_connections_analysis(kb_id: UUID, papers: list, kb_name: str)
         # Validate input
         if not papers:
             print("No papers provided for connection analysis")
-            return _generate_fallback_connections(papers)
+            return 
         
-        # Prepare minimal paper data for connections
+        # Prepare paper data for connections (now includes full_text)
         papers_data = []
         for paper in papers[:20]:  # Limit to 20 papers for performance
             if not isinstance(paper, dict):
                 print(f"Invalid paper data format: {paper}")
                 continue
-                
             papers_data.append({
                 'id': str(paper.get('id', '')),
                 'title': str(paper.get('title', ''))[:100],
@@ -932,75 +932,104 @@ async def generate_connections_analysis(kb_id: UUID, papers: list, kb_name: str)
                 'year': paper.get('year', 2020),
                 'citations': int(paper.get('citations', 0)),
                 'topics': paper.get('topics', [])[:5],
-                'abstract': str(paper.get('abstract', ''))[:200]
+                'abstract': str(paper.get('abstract', ''))[:200],
+                'full_text': str(paper.get('full_text', ''))  # Pass full_text to the model
             })
         
         if not papers_data:
             print("No valid paper data after preprocessing")
-            return _generate_fallback_connections(papers)
+            return
         
         # Focused prompt for connections
         prompt = f"""
-        Analyze the connections between these {len(papers_data)} research papers.
-        Create a network graph representation showing relationships based on:
-        - Shared topics and themes
-        - Citation patterns  
-        - Author collaborations
-        - Methodological similarities
-        
-        Papers: {json.dumps(papers_data, indent=2)}
+        Analyze and identify all possible connections between these {len(papers_data)} research papers.
+        Focus specifically on finding and quantifying:
+
+        1. Topic Connections:
+        - Exact shared keywords and research themes
+        - Overlapping subject areas and domains
+        - Similar theoretical frameworks used
+
+        2. Citation Relationships:
+        - Direct citations between papers
+        - Papers citing the same key references
+        - Citation patterns showing research lineage
+
+        3. Author Networks:
+        - Co-authorship between papers
+        - Authors publishing multiple papers in the set
+        - Institutional collaborations
+
+        4. Methodology Links:
+        - Papers using the same research methods
+        - Similar experimental designs or approaches
+        - Shared datasets or evaluation metrics
+
+        For each connection found:
+        1. Assign a strength score (0.0-1.0) based on:
+           - Number of shared elements
+           - Significance of the connection
+           - Temporal proximity of the papers
+        2. Provide a clear explanation of why these papers are connected, mentioning specific shared elements, methodologies, or themes.
+
+        Papers to analyze (full text included): {json.dumps(papers_data, indent=2)}
         """
         
         response = await llama_client.generate_response(prompt, response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "connections_analysis",
-                "schema": {
+            "type": "object",
+            "properties": {
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "authors": {"type": "array", "items": {"type": "string"}},
+                            "year": {"type": "integer"},
+                            "citations": {"type": "integer"},
+                            "qualityScore": {"type": "number"},
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "connections": {"type": "integer"}
+                        },
+                        "required": ["id", "title", "authors", "year", "citations", "qualityScore", "x", "y", "connections"]
+                    }
+                },
+                "edges": {
+                    "type": "array", 
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "source": {"type": "string"},
+                            "target": {"type": "string"},
+                            "strength": {"type": "number"},
+                            "explanation": {"type": "string"},
+                            "style": {
+                                "type": "object",
+                                "properties": {
+                                    "stroke": {"type": "string"},
+                                    "strokeWidth": {"type": "number"},
+                                    "strokeOpacity": {"type": "number"}
+                                }
+                            },
+                            "animated": {"type": "boolean"}
+                        },
+                        "required": ["id", "source", "target", "strength", "explanation"]
+                    }
+                },
+                "stats": {
                     "type": "object",
                     "properties": {
-                        "nodes": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "title": {"type": "string"},
-                                    "authors": {"type": "array", "items": {"type": "string"}},
-                                    "year": {"type": "integer"},
-                                    "citations": {"type": "integer"},
-                                    "qualityScore": {"type": "number"},
-                                    "x": {"type": "number"},
-                                    "y": {"type": "number"},
-                                    "connections": {"type": "integer"}
-                                },
-                                "required": ["id", "title", "authors", "year", "citations", "qualityScore", "x", "y", "connections"]
-                            }
-                        },
-                        "edges": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "source": {"type": "string"},
-                                    "target": {"type": "string"},
-                                    "strength": {"type": "number"}
-                                },
-                                "required": ["source", "target", "strength"]
-                            }
-                        },
-                        "stats": {
-                            "type": "object",
-                            "properties": {
-                                "totalNodes": {"type": "integer"},
-                                "totalConnections": {"type": "integer"},
-                                "avgDegree": {"type": "number"}
-                            },
-                            "required": ["totalNodes", "totalConnections", "avgDegree"]
-                        }
+                        "totalNodes": {"type": "integer"},
+                        "totalConnections": {"type": "integer"},
+                        "avgDegree": {"type": "number"}
                     },
-                    "required": ["nodes", "edges", "stats"]
+                    "required": ["totalNodes", "totalConnections", "avgDegree"]
                 }
-            }
+            },
+            "required": ["nodes", "edges", "stats"]
         })
         
         if not response:
@@ -1008,7 +1037,9 @@ async def generate_connections_analysis(kb_id: UUID, papers: list, kb_name: str)
             return _generate_fallback_connections(papers)
             
         try:
-            data = json.loads(response)
+            # Handle both string and object responses
+            data = response if isinstance(response, dict) else json.loads(response)
+            
             # Validate required fields
             if not all(key in data for key in ["nodes", "edges", "stats"]):
                 print("Missing required fields in response")
@@ -1016,7 +1047,7 @@ async def generate_connections_analysis(kb_id: UUID, papers: list, kb_name: str)
                 
             return data
             
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, AttributeError) as e:
             print(f"JSON decode error: {e}")
             print(f"Raw response: {response}")
             return _generate_fallback_connections(papers)
@@ -1024,6 +1055,54 @@ async def generate_connections_analysis(kb_id: UUID, papers: list, kb_name: str)
     except Exception as e:
         print(f"Error in connection analysis: {e}")
         return _generate_fallback_connections(papers)
+
+def _generate_fallback_connections(papers: list):
+    """Generate basic connections when Llama is not available"""
+    llama_client = LlamaClient()
+    
+    # Create nodes for each paper
+    nodes = []
+    for i, paper in enumerate(papers[:20]):  # Limit to 20 papers
+        nodes.append({
+            "id": str(paper.get('id', '')),
+            "title": str(paper.get('title', ''))[:100],
+            "authors": paper.get('authors', [])[:3],
+            "year": paper.get('year', 2020),
+            "citations": int(paper.get('citations', 0)),
+            "qualityScore": min(9.5, 7.0 + (paper.get('citations', 0) / 10000)),
+            "x": 400 + (i % 4) * 200,  # Grid layout
+            "y": 300 + (i // 4) * 150,
+            "connections": 0
+        })
+    
+    # Create basic edges between papers based on year and topics
+    edges = []
+    for i, node1 in enumerate(nodes):
+        connections = 0
+        for j, node2 in enumerate(nodes[i+1:], i+1):
+            # Connect papers if they're within 2 years of each other
+            year_diff = abs(node1['year'] - node2['year'])
+            if year_diff <= 2:
+                strength = 1.0 - (year_diff / 4)  # Strength based on year difference
+                edges.append({
+                    "source": node1['id'],
+                    "target": node2['id'],
+                    "strength": strength,
+                    "explanation": f"These papers were published in {node1['year']} and {node2['year']} respectively, suggesting potential research continuity."
+                })
+                connections += 1
+                nodes[i]['connections'] = connections
+                nodes[j]['connections'] = nodes[j]['connections'] + 1
+    
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "stats": {
+            "totalNodes": len(nodes),
+            "totalConnections": len(edges),
+            "avgDegree": len(edges) * 2 / max(len(nodes), 1)  # Each edge connects 2 nodes
+        }
+    }
 
 async def generate_insights_analysis(kb_id: UUID, papers: list, kb_name: str):
     """Generate insights data with focused prompt"""
@@ -1110,6 +1189,7 @@ async def generate_insights_analysis(kb_id: UUID, papers: list, kb_name: str):
         }}
         
         Be specific and use actual paper IDs. Identify 2-4 items per category.
+        If you do not know the exact answer to field, give your best guesstimate that's reasonable. 
         """
         
         response = await llama_client.generate_response(prompt, response_format={

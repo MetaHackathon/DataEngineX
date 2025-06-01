@@ -244,7 +244,48 @@ class LlamaClient:
     
     def _mock_response(self, prompt: str) -> str:
         """Provide mock responses when API is not available"""
-        if "summary" in prompt.lower():
+        if "connections" in prompt.lower():
+            # Mock response for connections analysis
+            return json.dumps({
+                "nodes": [
+                    {
+                        "id": "mock_paper_1",
+                        "title": "Mock Paper 1",
+                        "authors": ["Author 1"],
+                        "year": 2023,
+                        "citations": 100,
+                        "qualityScore": 8.5,
+                        "x": 400,
+                        "y": 300,
+                        "connections": 2
+                    },
+                    {
+                        "id": "mock_paper_2",
+                        "title": "Mock Paper 2",
+                        "authors": ["Author 2"],
+                        "year": 2022,
+                        "citations": 50,
+                        "qualityScore": 8.0,
+                        "x": 600,
+                        "y": 300,
+                        "connections": 1
+                    }
+                ],
+                "edges": [
+                    {
+                        "source": "mock_paper_1",
+                        "target": "mock_paper_2",
+                        "strength": 0.8
+                    }
+                ],
+                "stats": {
+                    "totalNodes": 2,
+                    "totalConnections": 1,
+                    "avgDegree": 1.0
+                }
+            })
+        
+        elif "summary" in prompt.lower():
             return """This research addresses an important problem in the field. The authors propose a novel methodology that shows promising results. Key findings include improved performance metrics and practical applications. The work contributes to our understanding of the domain and opens avenues for future research. Some limitations include the need for larger datasets and broader validation."""
         
         elif "methodology" in prompt.lower():
